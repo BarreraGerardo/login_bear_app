@@ -29,6 +29,56 @@ Timer? _typingDebounce;
   //2.1 CREAR LAS VARIABLES PARA FocusNode
   final _emailFocus = FocusNode();
   final _passwordFocus = FocusNode();
+//Controles que manipulan lo que el usuario escribe
+final _emailCtrl = TextEditingController();
+final _passCtrl = TextEditingController();
+
+//Errores para mostrarlo en la UI
+String? _emailError;
+String? _passError;
+
+//Validadores
+bool isValidEmail(String email) {
+  final re = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+  return re.hasMatch(email);
+}
+
+bool isValidPassword(String password) {
+  final re = RegExp(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$',);
+  return re.hasMatch(password);
+}
+
+//Dar acción al boton
+void _onLogin(){
+  //De lo que escribio el usuario retirar espacion en blanco
+  final email = _emailCtrl.text.trim();
+  final pass = _passCtrl.text;
+
+  //Evaluar los errores
+  final eError = isValidEmail(email) ? null : "Invalid email";
+  final pError = isValidPassword(pass) ? null : "Invalid password";
+
+//Avisar que hubo cambio
+setState((){
+  _emailError = eError;
+  _passError = pError;
+});
+
+//Cerrar el teclado y bajar las manos
+FocusScope.of(context).unfocus(); //quita el foco
+_typingDebounce?.cancel();
+_isChecking?.change(false);
+_isHandsUp?.change(false);
+_numLook?.value = 50.0; //mirada neutra
+
+//Activar triggers
+if(eError == null && pError == null){
+  _trigSuccess?.fire();
+  }
+  else{
+    _trigFail?.fire();
+  }
+}
 
   //2.2 Listeners (Oyentes/Chismosos)
   @override
@@ -91,6 +141,9 @@ Timer? _typingDebounce;
               const SizedBox(height: 10),
               //CAMPO DE TEXTO EMAIL
               TextField(
+                //Enlazar controller
+                controller: _emailCtrl,
+                //asignar campo de texto
                   focusNode: _emailFocus,
                   onChanged: (value) {
                   if (_isHandsUp != null) {
@@ -119,6 +172,8 @@ Timer? _typingDebounce;
                 },
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
+                  //Mostrar el texto de error
+                  errorText: _emailError,
                   hintText: 'Email',
                   prefixIcon: const Icon(Icons.email),
                   border: OutlineInputBorder(
@@ -130,6 +185,8 @@ Timer? _typingDebounce;
               const SizedBox(height: 10),
               //CAMPO DE TEXTO CONTRASEÑA
               TextField(
+                //Enlazar controller
+                controller: _passCtrl,
                 focusNode:_passwordFocus,
                 onChanged: (value) {
                   if (_isChecking != null) {
@@ -142,7 +199,9 @@ Timer? _typingDebounce;
                 },
                 obscureText: _obscure,
                 decoration: InputDecoration(
-                  hintText: 'Contraseña',
+                  //Mostrar el texto de error
+                  errorText: _passError,
+                  hintText: 'Password',
                   prefixIcon: const Icon(Icons.lock),
                   suffixIcon: IconButton(
                     icon: Icon(
@@ -161,6 +220,57 @@ Timer? _typingDebounce;
                   ),
                 ),
               ),
+              SizedBox(height: 10),
+              //Texto olvide la contraseña
+              SizedBox(
+                width: size.width,
+                child: const Text(
+                  'Olvide mi contraseña',
+                  textAlign: TextAlign.end,
+                  style: TextStyle(
+                    decoration: TextDecoration.underline,)
+                ),
+              ),
+              const SizedBox(height: 10),
+              //Boton de Login
+              MaterialButton(
+                minWidth: size.width,
+                height: 50,
+                color: Colors.red,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                onPressed: _onLogin,
+                child: const Text('Login',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                  ),
+                )
+                ),
+                const SizedBox(height: 10),
+                SizedBox(width:size.width,
+                child: Row(mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Text("Don't have an account?",
+                    style: TextStyle(
+                      color: Colors.black,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: null,
+                    child: Text(''),
+                  ),
+                  SizedBox(width: 5),
+                  Text('Sign up',
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+                ),
+                )
             ],
           ),
         ),
