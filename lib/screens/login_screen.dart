@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:rive/rive.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
 
-import 'dart:async'; // importar el Timer
+import 'signup_screen.dart';
+import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -18,34 +21,30 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _rememberMe = false;
   bool _rememberMeAnimating = false;
 
-  // 1.1 CREAR EL CEREBRO DE LA ANIMACION
+  // CEREBRO DE LA ANIMACIÓN DE RIVE
   StateMachineController? _controller;
 
-  // SMI: STATE MACHINE INPUT / ENTRADA DE MAQUINA DE ESTADO
+  // ENTRADAS DE LA MÁQUINA DE ESTADOS (SMI)
   SMIBool? _isChecking;
   SMIBool? _isHandsUp;
   SMITrigger? _trigSuccess;
   SMITrigger? _trigFail;
-
-  // VARIABLE DEL RECORRIDO DE LA MIRADA
   SMINumber? _numLook;
 
-  // TIMER
+  // TIMER PARA DEBOUNCE
   Timer? _typingDebounce;
 
-  // 2.1 CREAR LAS VARIABLES PARA FocusNode
+  // FOCUS NODES Y CONTROLADORES
   final _emailFocus = FocusNode();
   final _passwordFocus = FocusNode();
-
-  // CONTROLES QUE MANIPULAN LO QUE EL USUARIO ESCRIBE
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
 
-  // ERRORES PARA MOSTRARLOS EN LA UI
+  // ERRORES PARA MOSTRAR EN LA UI
   String? _emailError;
   String? _passError;
 
-  // VALIDADORES
+  // VALIDADORES LOCALES
   bool isValidEmail(String email) {
     final re = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
     return re.hasMatch(email);
@@ -55,70 +54,156 @@ class _LoginScreenState extends State<LoginScreen> {
     final re = RegExp(
       r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$',
     );
-
     return re.hasMatch(password);
   }
 
-  // DAR ACCIÓN AL BOTÓN LOGIN
-  void _onLogin() {
-    // De lo que escribió el usuario retirar espacios en blanco
+  // ACCIÓN DEL BOTÓN LOGIN CON FIREBASE AUTH (Fase 2)
+  Future<void> _onLogin() async {
     final email = _emailCtrl.text.trim();
     final pass = _passCtrl.text;
 
-    // Evaluar los errores
     final eError = isValidEmail(email) ? null : "Invalid email";
     final pError = isValidPassword(pass) ? null : "Invalid password";
 
-    // Avisar que hubo cambio
     setState(() {
       _emailError = eError;
       _passError = pError;
     });
 
-    // Cerrar el teclado y bajar las manos
+    // Si hay errores locales de validación
+    if (eError != null || pError != null) {
+      FocusScope.of(context).unfocus();
+      _typingDebounce?.cancel();
+      _isChecking?.change(false);
+      _isHandsUp?.change(false);
+      _numLook?.value = 50.0;
+      _trigFail?.fire();
+      return;
+    }
+
+    // Limpiar estados interactivos de Rive antes de consultar Firebase
     FocusScope.of(context).unfocus();
-
-    // Quitar el timer
     _typingDebounce?.cancel();
-
-    // Cambiar animaciones de Rive
     _isChecking?.change(false);
     _isHandsUp?.change(false);
-
-    // Mirada neutra
     _numLook?.value = 50.0;
 
-    // Activar triggers
-    if (eError == null && pError == null) {
+    try {
+      // 🔐 Autenticación real con Firebase Authentication
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: pass,
+      );
+
+      if (!mounted) return;
+
+      // Éxito: Activar animación alegre del osito
       _trigSuccess?.fire();
-    } else {
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('¡Inicio de sesión exitoso!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Esperar 1.2 segundos para mostrar la animación antes de navegar a la HomeScreen
+      Future.delayed(const Duration(milliseconds: 1200), () {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
+      });
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      // Fallo en Firebase Auth: Activar animación de error
       _trigFail?.fire();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message ?? 'Error al iniciar sesión'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
+  // DIÁLOGO DE RECUPERACIÓN DE CONTRASEÑA (Fase 4)
+  void _showPasswordResetDialog(BuildContext context) {
+    final resetCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Recuperar contraseña'),
+        content: TextField(
+          controller: resetCtrl,
+          keyboardType: TextInputType.emailAddress,
+          decoration: const InputDecoration(
+            hintText: 'Ingresa tu correo electrónico',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              final email = resetCtrl.text.trim();
+              if (email.isEmpty) return;
+
+              try {
+                await FirebaseAuth.instance.sendPasswordResetEmail(
+                  email: email,
+                );
+
+                if (!mounted) return;
+
+                // ignore: use_build_context_synchronously
+                Navigator.pop(dialogContext);
+                // ignore: use_build_context_synchronously
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Correo de recuperación enviado exitosamente.'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } on FirebaseAuthException catch (e) {
+                if (!mounted) return;
+
+                // ignore: use_build_context_synchronously
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(e.message ?? 'Error al enviar correo'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Enviar', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _toggleRememberMe() async {
-    // ANTI-SPAM:
-    // Si la animación está ocurriendo, ignorar el toque.
     if (_rememberMeAnimating) return;
 
     setState(() {
-      // Bloquear nuevos toques
       _rememberMeAnimating = true;
-
-      // Cambiar el estado
       _rememberMe = !_rememberMe;
     });
 
-    // Esperar mientras se reproduce la animación visual.
-    await Future.delayed(
-      const Duration(milliseconds: 300),
-    );
+    await Future.delayed(const Duration(milliseconds: 300));
 
-    // Verificar que la pantalla todavía exista.
     if (!mounted) return;
 
     setState(() {
-      // Volver a permitir interacción.
       _rememberMeAnimating = false;
     });
   }
@@ -129,31 +214,24 @@ class _LoginScreenState extends State<LoginScreen> {
 
     _emailFocus.addListener(() {
       if (_emailFocus.hasFocus) {
-        if (_isHandsUp?.change(false) != null) {
-          // Manos abajo en email
-          _isHandsUp!.change(false);
-
-          // Mirada neutra
-          _numLook?.value = 50.0;
-        }
+        _isHandsUp?.change(false);
+        _numLook?.value = 50.0;
       }
     });
 
     _passwordFocus.addListener(() {
-      // Manos arriba en password
       _isHandsUp?.change(_passwordFocus.hasFocus);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // Para obtener el tamaño de la pantalla
     final Size size = MediaQuery.of(context).size;
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           child: Column(
             children: [
               SizedBox(
@@ -162,188 +240,103 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: RiveAnimation.asset(
                   'assets/login_bear.riv',
                   stateMachines: const ['Login Machine'],
-
-                  // 1.2 VINCULAR ANIMACIÓN
                   onInit: (artboard) {
-                    _controller =
-                        StateMachineController.fromArtboard(
+                    _controller = StateMachineController.fromArtboard(
                       artboard,
                       'Login Machine',
                     );
 
-                    // 1.3 VERIFICAR QUE INICIÓ BIEN
                     if (_controller == null) return;
 
-                    // AGREGA EL CONTROLADOR AL ESCENARIO/TABLERO
                     artboard.addController(_controller!);
 
-                    // VINCULAMOS VARIABLES
-                    _isChecking =
-                        _controller!.findSMI('isChecking');
-
-                    _isHandsUp =
-                        _controller!.findSMI('isHandsUp');
-
-                    _trigSuccess =
-                        _controller!.findSMI('trigSuccess');
-
-                    _trigFail =
-                        _controller!.findSMI('trigFail');
-
-                    // VINCULAR numLook
-                    _numLook =
-                        _controller!.findSMI('numLook');
+                    _isChecking = _controller!.findSMI('isChecking');
+                    _isHandsUp = _controller!.findSMI('isHandsUp');
+                    _trigSuccess = _controller!.findSMI('trigSuccess');
+                    _trigFail = _controller!.findSMI('trigFail');
+                    _numLook = _controller!.findSMI('numLook');
                   },
                 ),
               ),
-
               const SizedBox(height: 10),
-
               TextField(
                 controller: _emailCtrl,
                 focusNode: _emailFocus,
-
                 onChanged: (value) {
-                  if (_isHandsUp != null) {
-                    // NO TAPES LOS OJOS
-                    // _isHandsUp!.change(false);
-                  }
-
                   if (_isChecking == null) return;
-
-                  // ACTIVAR EL MODO CHISMOSO
                   _isChecking!.change(true);
 
-                  // IMPLEMENTAR numLook
-                  final look =
-                      (value.length / 80.0 * 100.0)
-                          .clamp(0.0, 100.0);
-
+                  final look = (value.length / 80.0 * 100.0).clamp(0.0, 100.0);
                   _numLook?.value = look;
 
-                  // DEBOUNCE
                   _typingDebounce?.cancel();
-
-                  _typingDebounce = Timer(
-                    const Duration(seconds: 3),
-                    () {
-                      // Si cierra la pantalla, quitar el contador
-                      if (!mounted) return;
-
-                      // Mirada neutra
-                      _isChecking?.change(false);
-                    },
-                  );
+                  _typingDebounce = Timer(const Duration(seconds: 3), () {
+                    if (!mounted) return;
+                    _isChecking?.change(false);
+                  });
                 },
-
                 keyboardType: TextInputType.emailAddress,
-
                 decoration: InputDecoration(
                   errorText: _emailError,
                   hintText: 'Email',
                   prefixIcon: const Icon(Icons.email),
-
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
-
-              const SizedBox(height: 10),
-
+              const SizedBox(height: 15),
               TextField(
                 controller: _passCtrl,
                 focusNode: _passwordFocus,
-
                 onChanged: (value) {
-                  if (_isChecking != null) {
-                    // NO TAPES LOS OJOS
-                    // _isChecking!.change(false);
-                  }
-
                   if (_isHandsUp == null) return;
-
-                  // ACTIVAR MODO CHISMOSO
                   _isHandsUp!.change(true);
                 },
-
                 obscureText: _obscure,
-
                 decoration: InputDecoration(
                   errorText: _passError,
                   hintText: 'Password',
                   prefixIcon: const Icon(Icons.lock),
-
                   suffixIcon: IconButton(
                     icon: Icon(
-                      _obscure
-                          ? Icons.visibility
-                          : Icons.visibility_off,
+                      _obscure ? Icons.visibility : Icons.visibility_off,
                     ),
-
                     onPressed: () {
-                      // REFRESCAR EL ICONO
                       setState(() {
                         _obscure = !_obscure;
                       });
                     },
                   ),
-
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
-
-              const SizedBox(height: 10),
-
+              const SizedBox(height: 15),
               Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceBetween,
-
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   GestureDetector(
-                    // ANTI-SPAM
-                    onTap: _rememberMeAnimating
-                        ? null
-                        : _toggleRememberMe,
-
+                    onTap: _rememberMeAnimating ? null : _toggleRememberMe,
                     child: Row(
                       children: [
-                        // CHECKBOX ANIMADO
                         AnimatedContainer(
-                          duration:
-                              const Duration(milliseconds: 300),
-
+                          duration: const Duration(milliseconds: 300),
                           curve: Curves.easeInOut,
-
                           width: 24,
                           height: 24,
-
                           decoration: BoxDecoration(
-                            color: _rememberMe
-                                ? Colors.red
-                                : Colors.transparent,
-
-                            borderRadius:
-                                BorderRadius.circular(6),
-
+                            color: _rememberMe ? Colors.red : Colors.transparent,
+                            borderRadius: BorderRadius.circular(6),
                             border: Border.all(
-                              color: _rememberMe
-                                  ? Colors.red
-                                  : Colors.grey,
-
+                              color: _rememberMe ? Colors.red : Colors.grey,
                               width: 2,
                             ),
                           ),
-
                           child: AnimatedOpacity(
-                            duration:
-                                const Duration(milliseconds: 150),
-
-                            opacity:
-                                _rememberMe ? 1.0 : 0.0,
-
+                            duration: const Duration(milliseconds: 150),
+                            opacity: _rememberMe ? 1.0 : 0.0,
                             child: const Icon(
                               Icons.check,
                               color: Colors.white,
@@ -351,89 +344,67 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                         ),
-
                         const SizedBox(width: 8),
-
                         const Text(
                           'Remember me',
-
-                          style: TextStyle(
-                            fontSize: 14,
-                          ),
+                          style: TextStyle(fontSize: 14),
                         ),
                       ],
                     ),
                   ),
-
-
-
-                  const Text(
-                    'Olvide mi contraseña',
-
-                    style: TextStyle(
-                      decoration:
-                          TextDecoration.underline,
+                  GestureDetector(
+                    onTap: () => _showPasswordResetDialog(context),
+                    child: const Text(
+                      'Olvide mi contraseña',
+                      style: TextStyle(
+                        decoration: TextDecoration.underline,
+                        color: Colors.red,
+                      ),
                     ),
                   ),
                 ],
               ),
-
-              const SizedBox(height: 10),
-
-
+              const SizedBox(height: 25),
               MaterialButton(
                 minWidth: size.width,
                 height: 50,
                 color: Colors.red,
-
                 shape: RoundedRectangleBorder(
-                  borderRadius:
-                      BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-
                 onPressed: _onLogin,
-
                 child: const Text(
                   'Login',
-
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                  ),
+                  style: TextStyle(color: Colors.white, fontSize: 18),
                 ),
               ),
-
-              const SizedBox(height: 10),
-
+              const SizedBox(height: 20),
               SizedBox(
                 width: size.width,
-
                 child: Row(
-                  mainAxisAlignment:
-                      MainAxisAlignment.center,
-
-                  children: const [
-                    Text(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
                       "Don't have an account?",
-
-                      style: TextStyle(
-                        color: Colors.black,
-                      ),
+                      style: TextStyle(color: Colors.black),
                     ),
-
-                    TextButton(
-                      onPressed: null,
-                      child: Text(''),
-                    ),
-
-                    SizedBox(width: 5),
-
-                    Text(
-                      'Sign up',
-
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontWeight: FontWeight.bold,
+                    const SizedBox(width: 5),
+                    GestureDetector(
+                      onTap: () {
+                        // Navegación a la pantalla de Sign Up (Fase 3)
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const SignUpScreen(),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        'Sign up',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ],
@@ -450,12 +421,9 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _emailFocus.dispose();
     _passwordFocus.dispose();
-
     _emailCtrl.dispose();
     _passCtrl.dispose();
-
     _typingDebounce?.cancel();
-
     super.dispose();
   }
 }
